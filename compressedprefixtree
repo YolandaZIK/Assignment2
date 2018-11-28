@@ -1,0 +1,85 @@
+        if limit is None:
+            
+            if prefix == self.value:
+                return sorted(self._return_all_values(), key=lambda x: x[1],
+                              reverse=True)
+
+            subtree = self.find_a_tree(matched_length, prefix)
+
+            if subtree >= 0:
+                return self.subtrees[subtree].autocomplete(prefix)
+            return []
+
+        else:  # when there is a limit of the number you can return
+            if limit > 0:
+                if self.is_leaf():
+                    return [(self.value, self.weight)]
+
+                # when self is a tree
+                if self.value == prefix:
+
+                    all_values = []
+
+                    for subtree in self.subtrees:
+                        return_values = subtree.autocomplete(subtree.value,
+                                                             limit)
+                        all_values.extend(return_values)
+                        limit -= len(return_values)
+
+                    return sorted(all_values, key=lambda x: x[1], reverse=True)
+                else:  # when the prefix is not the root, maybe prefix in tree
+                    subtree = self.find_a_tree(matched_length, prefix)
+
+                    if subtree >= 0:
+                        return self.subtrees[subtree].autocomplete(prefix,
+                                                                   limit)
+                    return []
+            return []
+
+    def remove(self, prefix: List) -> None:
+        """Remove all values that match the given prefix.
+
+        After removal of values under a given prefix, the compressed prefix tree
+        does not contain any empty tree.
+
+        If a tree has only one internal node, compress this tree.
+
+        """
+        if prefix == self.value:
+            self.value, self.weight, self._num_of_values, self._sum_of_weights \
+                = [], 0.0, 0, 0.0
+            self.subtrees = []
+        else:  # when prefix is not self.value, prefix maybe in the tree, or not
+            match_length = self.match_length(prefix)
+            target_subtree = self.find_a_tree(match_length, prefix)
+
+            if target_subtree >= 0:
+                mutated_tree = self.subtrees.pop(target_subtree)
+
+                old_size, old_weights = mutated_tree._num_of_values, \
+                                        mutated_tree._sum_of_weights
+
+                mutated_tree.remove(prefix)
+
+                if len(mutated_tree.subtrees) == 1 and \
+                        not mutated_tree.subtrees[0].is_leaf():
+                    mutated_tree.merge_tree()
+
+                if not mutated_tree.is_empty():
+                    self._insert_a_subtree(mutated_tree)
+
+                self._sum_of_weights -= old_weights - \
+                                        mutated_tree._sum_of_weights
+                self._num_of_values -= old_size - mutated_tree._num_of_values
+
+                self._update_weight()
+                self._remove_empty_tree()
+
+                if len(self.subtrees) == 1 and not self.subtrees[0].is_leaf():
+                    self.merge_tree()
+
+                if self.is_empty():
+                    self.value, self.subtrees = [], []
+                    self._num_of_values, self._sum_of_weights = 0, 0.0
+            else:
+                return
