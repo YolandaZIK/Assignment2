@@ -1,0 +1,926 @@
+"""CSC148 Assignment 2: Autocompleter classes
+
+=== CSC148 Fall 2018 ===
+Department of Computer Science,
+University of Toronto
+
+=== Module Description ===
+This file contains the design of a public interface (Autocompleter) and two
+implementation of this interface, SimplePrefixTree and CompressedPrefixTree.
+You'll complete both of these subclasses over the course of this assignment.
+
+As usual, be sure not to change any parts of the given *public interface* in the
+starter code---and this includes the instance attributes, which we will be
+testing directly! You may, however, add new private attributes, methods, and
+top-level functions to this file.
+"""
+from __future__ import annotations
+from typing import Any, List, Optional, Tuple
+
+
+################################################################################
+# The Autocompleter ADT
+################################################################################
+class Autocompleter:
+    """An abstract class representing the Autocompleter Abstract Data Type.
+    """
+    def __len__(self) -> int:
+        """Return the number of values stored in this Autocompleter."""
+        raise NotImplementedError
+
+    def insert(self, value: Any, weight: float, prefix: List) -> None:
+        """Insert the given value into this Autocompleter.
+
+        The value is inserted with the given weight, and is associated with
+        the prefix sequence <prefix>.
+
+        If the value has already been inserted into this prefix tree
+        (compare values using ==), then the given weight should be *added* to
+        the existing weight of this value.
+
+        Preconditions:
+            weight > 0
+            The given value is either:
+                1) not in this Autocompleter
+                2) was previously inserted with the SAME prefix sequence
+        """
+        raise NotImplementedError
+
+    def autocomplete(self, prefix: List,
+                     limit: Optional[int] = None) -> List[Tuple[Any, float]]:
+        """Return up to <limit> matches for the given prefix.
+
+        The return value is a list of tuples (value, weight), and must be
+        ordered in non-increasing weight. (You can decide how to break ties.)
+
+        If limit is None, return *every* match for the given prefix.
+
+        Precondition: limit is None or limit > 0.
+        """
+        raise NotImplementedError
+
+    def remove(self, prefix: List) -> None:
+        """Remove all values that match the given prefix.
+        """
+        raise NotImplementedError
+
+
+################################################################################
+# SimplePrefixTree (Tasks 1-3)
+################################################################################
+class SimplePrefixTree(Autocompleter):
+    """A simple prefix tree.
+
+    This class follows the implementation described on the assignment handout.
+    Note that we've made the attributes public because we will be accessing them
+    directly for testing purposes.
+
+    === Attributes ===
+    value:
+        The value stored at the root of this prefix tree, or [] if this
+        prefix tree is empty.
+    weight:
+        The weight of this prefix tree. If this tree is a leaf, this attribute
+        stores the weight of the value stored in the leaf. If this tree is
+        not a leaf and non-empty, this attribute stores the *aggregate weight*
+        of the leaf weights in this tree.
+    subtrees:
+        A list of subtrees of this prefix tree.
+    _agg_weight:
+        A string to represent the method for calculating the aggregate weight
+        of a SimplePrefixTree
+        <_agg_weight> is either "sum" or "average"
+    _sum_of_weights:
+        A float for the sum of all inserted values' weights
+    _num_of_values:
+        An integer for the number of inserted values
+    === Representation invariants ===
+    - self.weight >= 0
+
+    - _num_of_values >= 0
+
+    _ _sum_of_weights >= 0
+
+    - (EMPTY TREE):
+        If self.weight == 0, then self.value == [] and self.subtrees == [].
+        This represents an empty simple prefix tree.
+    - (LEAF):
+        If self.subtrees == [] and self.weight > 0, this tree is a leaf.
+        (self.value is a value that was inserted into this tree.)
+    - (NON-EMPTY, NON-LEAF):
+        If len(self.subtrees) > 0, then self.value is a list (*common prefix*),
+        and self.weight > 0 (*aggregate weight*).
+
+    - ("prefixes grow by 1")
+      If len(self.subtrees) > 0, and subtree in self.subtrees, and subtree
+      is non-empty and not a leaf, then
+
+          subtree.value == self.value + [x], for some element x
+
+    - self.subtrees does not contain any empty prefix trees.
+    - self.subtrees is *sorted* in non-increasing order of their weights.
+      (You can break ties any way you like.)
+      Note that this applies to both leaves and non-leaf subtrees:
+      both can appear in the same self.subtrees list, and both have a `weight`
+      attribute.
+    """
+    value: Any
+    weight: float
+    subtrees: List[SimplePrefixTree]
+    _sum_of_weights: float
+    _num_of_values: int
+    _agg_weight: str
+
+    def __init__(self, weight_type: str) -> None:
+        """Initialize an empty simple prefix tree.
+
+        Precondition: weight_type == 'sum' or weight_type == 'average'.
+
+        The given <weight_type> value specifies how the aggregate weight
+        of non-leaf trees should be calculated (see the assignment handout
+        for details).
+        """
+        self.value, self.weight, self.subtrees = [], 0.0, []
+        self._num_of_values, self._sum_of_weights = 0, 0.0
+        self._agg_weight = weight_type
+
+    def __len__(self) -> int:
+        """ Return the number of inserted values in a SimplePrefixTree
+        """
+        if self.is_empty():
+            return 0
+        elif self.is_leaf():
+            return 1
+        else:
+            return sum(len(subtree) for subtree in self.subtrees)
+
+    def is_empty(self) -> bool:
+        """Return whether this simple prefix tree is empty.
+           Return True if self.weight == 0.0
+        """
+        return self.weight == 0.0
+
+    def is_leaf(self) -> bool:
+        """Return whether this simple prefix tree is a leaf.
+           Return True if self.weight > 0.0 and self.subtrees == []
+        """
+        return self.weight > 0 and self.subtrees == []
+
+    def __str__(self) -> str:
+        """Return a string representation of this tree.
+
+        You may find this method helpful for debugging.
+        """
+        return self._str_indented()
+
+    def _str_indented(self, depth: int = 0) -> str:
+        """Return an indented string representation of this tree.
+
+        The indentation level is specified by the <depth> parameter.
+        """
+        if self.is_empty():
+            return ''
+        else:
+            s = '  ' * depth + f'{self.value} ({self.weight})\n'
+            for subtree in self.subtrees:
+                s += subtree._str_indented(depth + 1)
+            return s
+
+    def _insert_a_subtree(self, spt: SimplePrefixTree) -> None:
+        """ Insert a mutated subtree back into self.subtree to maintain a
+        non-increasing order of subtrees
+        """
+        # (think about binary search)
+        index = 0
+        while index < len(self.subtrees):
+            if self.subtrees[index].weight < spt.weight:
+                break
+            index += 1
+        self.subtrees.insert(index, spt)
+
+    def _value_inserted(self, value: Any) -> Tuple[bool, int]:
+        """ Return True if the given value is already in the self.subtrees
+            Otherwise return False.
+        """
+        index, current, inserted_value = 0, None, False
+        while index < len(self.subtrees):
+            current = self.subtrees[index]
+            if current.is_leaf() and current.value == value:
+                inserted_value = True
+                break
+            index += 1
+        return (inserted_value, index)
+
+    def _part_of_prefix(self, prefix: List) -> Tuple[bool, int]:
+        """ Return True if one subtree.value[-1] ==  prefix[0]
+            Otherwise return False.
+        """
+        index, current, part_of_prefix_in_tree = 0, None, False
+
+        while index < len(self.subtrees):
+            current = self.subtrees[index]
+            if not current.is_leaf() and current.value[-1] == prefix[0]:
+                # compare
+                # the last element of the current simple prefix tree's value
+                # with the first element in prefix
+                part_of_prefix_in_tree = True
+                break
+            index += 1
+
+        return (part_of_prefix_in_tree, index)
+
+    def insert(self, value: Any, weight: float, prefix: List) -> None:
+        """Insert the given value into this Autocompleter.
+
+        The value is inserted with the given weight, and is associated with
+        the prefix sequence <prefix>.
+
+        If the value has already been inserted into this prefix tree
+        (compare values using ==), then the given weight should be *added* to
+        the existing weight of this value.
+
+        Preconditions:
+            weight > 0
+            The given value is either:
+                1) not in this Autocompleter
+                2) was previously inserted with the SAME prefix sequence
+        """
+        # - Base case: when the prefix is []
+        if prefix == []:
+            # Step 0: check whether there is a leaf that contains the same value
+            is_value_in_tree = self._value_inserted(value)
+            inserted_value, index = is_value_in_tree[0], is_value_in_tree[1]
+
+            # Case 1: when the value is not inserted
+            if not inserted_value:
+                new_leaf = SimplePrefixTree(self._agg_weight)
+
+                new_leaf.weight, new_leaf._sum_of_weights = weight, weight
+                new_leaf.value, new_leaf._num_of_values = value, 1
+
+                self._insert_a_subtree(new_leaf)
+
+                # since it is a new value, we should update the number of
+                # inserted value by 1
+                self._sum_of_weights += weight
+                self._num_of_values += 1
+
+            # Case 2: when the value is inserted
+            else:
+                temp_leaf = self.subtrees.pop(index)
+
+                temp_leaf.weight += weight
+                temp_leaf._sum_of_weights += weight
+
+                self._insert_a_subtree(temp_leaf)
+
+                self._sum_of_weights += weight
+
+        # - Recursive steps: when prefix is not the root value
+        else:
+            # Step 0: Check whether the SimplePrefixTree has part of the prefix
+            prefix_in_tree = self._part_of_prefix(prefix)
+            part_of_prefix_in_tree, index = prefix_in_tree[0], prefix_in_tree[1]
+
+            # - Case 1 : Part of the prefix is in the tree
+            if part_of_prefix_in_tree:
+                found_tree = self.subtrees.pop(index)
+
+                found_tree_num_of_values = found_tree._num_of_values
+
+                # Recursively insertion
+                found_tree.insert(value, weight, prefix[1:])
+
+                # if number of values inserted into the tree with part of the
+                # prefix, which means the value is new
+                if found_tree_num_of_values + 1 == found_tree._num_of_values:
+                    self._num_of_values += 1
+
+                self._insert_a_subtree(found_tree)
+                self._sum_of_weights += weight
+
+            # - Case 2: This is a new prefix, so the value
+            else:
+                new_tree = SimplePrefixTree(self._agg_weight)
+
+                new_tree.value = self.value + [prefix[0]]
+
+                new_tree.insert(value, weight, prefix[1:])
+
+                self._insert_a_subtree(new_tree)
+                self._sum_of_weights += weight
+                self._num_of_values += 1
+
+        # Last update the tree's weight
+        if self._agg_weight == "sum":
+            self.weight += weight
+        else:  # 'average'
+            self.weight = self._sum_of_weights / self._num_of_values
+
+    def _return_all_values(self) -> List[Tuple[Any, float]]:
+        """ Return a list of List[value, weight] inserted in the tree
+        """
+        if self.is_empty():
+            return []
+        elif self.is_leaf():
+            return [(self.value, self.weight)]
+        else:
+            re = []
+            for subtree in self.subtrees:
+                re += subtree._return_all_values()
+            return sorted(re, key=lambda x: x[1], reverse=True)
+
+    def remove_empty_subtrees(self) -> None:
+        """ Remove all empty trees.
+        """
+        index = 0
+        all_empty_tree_index = []
+
+        while index < len(self.subtrees):
+            current = self.subtrees[index]
+            if current.subtrees == [] \
+                    and current.value == [] \
+                    and current.weight == 0.0:
+                all_empty_tree_index.append(index)
+
+            index += 1
+
+        subtrees_copy = self.subtrees[:]
+        self.subtrees = []
+        for i in range(len(subtrees_copy)):
+            if i in all_empty_tree_index:
+                continue
+            else:
+                self.subtrees.append(subtrees_copy[i])
+
+    def _update_weight(self) -> None:
+        """ Update the tree's weight after removal
+        """
+        self._sum_of_weights, self._num_of_values = 0.0, 0
+
+        # Step 1: iterate through all subtrees and re-calculate the sum of
+        # inserted values and quantity
+        for subtree in self.subtrees:
+            self._sum_of_weights += subtree._sum_of_weights
+            self._num_of_values += subtree._num_of_values
+
+        if self._agg_weight == "sum":
+            self.weight = self._sum_of_weights
+        else:
+            if self._num_of_values == 0:
+                self.weight, self.value = 0.0, []
+            else:
+                self.weight = self._sum_of_weights / self._num_of_values
+
+    def _next_tree_(self, prefix: List) -> Optional[SimplePrefixTree]:
+        """ Return the tree with part of the prefix
+            If no prefix match, return None
+        """
+        next_tree, index = None, 0
+        while index < len(self.subtrees):
+            current = self.subtrees[index]
+            if not current.is_leaf() and current.value[-1] == prefix[0]:
+                next_tree = self.subtrees[index]
+                break
+            index += 1
+        return next_tree
+
+    def autocomplete(self, prefix: List,
+                     limit: Optional[int] = None) -> List[Tuple[Any, float]]:
+        """Return up to <limit> matches for the given prefix.
+
+        The return value is a list of tuples (value, weight), and must be
+        ordered in non-increasing weight. (You can decide how to break ties.)
+
+        If limit is None, return *every* match for the given prefix.
+
+        Precondition: limit is None or limit > 0.
+        ---------------------------
+        # BE CAREFUL ABOUT TIE!
+        # When there is only one spot leaft in the accumulator, but two more
+        # coming values have the same weight
+        """
+        if limit is None:
+            # - Case 1: when prefix is [], we need to return all values
+            if prefix == []:
+                return sorted(self._return_all_values(),
+                              key=lambda x: x[1],
+                              reverse=True)
+
+            # - Recursive Step: when prefix is not []
+
+            # Step 1: Find the tree whose value[-1] match prefix[0]
+            next_tree = self._next_tree_(prefix)
+
+            if next_tree is not None:
+                return next_tree.autocomplete(prefix[1:])
+            return []
+
+        else:
+            # - Case 1: when the limit is not zero yet
+            if limit > 0:
+                if prefix == []:  # when we find the prefix tree
+                    if self.is_leaf():
+                        return [(self.value, self.weight)]
+
+                    # when self is not a leaf
+                    all_values = []
+                    for subtree in self.subtrees:
+                        values = subtree.autocomplete(prefix, limit)
+                        limit -= len(values)
+                        all_values.extend(values)
+                    return sorted(all_values,
+                                  key=lambda x: x[1],
+                                  reverse=True)
+                else:
+                    next_tree = self._next_tree_(prefix)
+                    if next_tree is not None:
+                        return next_tree.autocomplete(prefix[1:], limit)
+                    return []
+            # when the limit == 0
+            else:
+                return []
+
+    def remove(self, prefix: List) -> None:
+        """Remove all values that match the given prefix.
+        """
+        # - Base case: when we find the prefix
+        if prefix == []:
+            self.value, self.weight, self._num_of_values, self._sum_of_weights \
+                = [], 0.0, 0, 0.0
+            self.subtrees = []
+
+        # - Recursive case
+        else:
+            prefix_in_tree = self._part_of_prefix(prefix)
+            found_tree, index = prefix_in_tree[0], prefix_in_tree[1]
+
+            if found_tree:
+                temp_tree = self.subtrees.pop(index)
+
+                temp_tree.remove(prefix[1:])
+                temp_tree.remove_empty_subtrees()
+
+                temp_tree._update_weight()
+
+                if not temp_tree.is_empty():
+                    self._insert_a_subtree(temp_tree)
+
+                self._update_weight()
+
+                if self.is_empty():
+                    assert self._sum_of_weights == 0.0
+                    assert self._num_of_values == 0
+                    self.value, self.weight, self.subtrees = [], 0.0, []
+
+################################################################################
+# CompressedPrefixTree (Task 6)
+################################################################################
+class CompressedPrefixTree(Autocompleter):
+    """A compressed prefix tree implementation.
+
+    While this class has the same public interface as SimplePrefixTree,
+    (including the initializer!) this version follows the implementation
+    described on Task 6 of the assignment handout, which reduces the number of
+    tree objects used to store values in the tree.
+
+    === Attributes ===
+    value:
+        The value stored at the root of this prefix tree, or [] if this
+        prefix tree is empty.
+    weight:
+        The weight of this prefix tree. If this tree is a leaf, this attribute
+        stores the weight of the value stored in the leaf. If this tree is
+        not a leaf and non-empty, this attribute stores the *aggregate weight*
+        of the leaf weights in this tree.
+    subtrees:
+        A list of subtrees of this prefix tree.
+    _agg_weight:
+        A string represent the type of aggregate weight calculation method
+    _sum_of_weights:
+        A float to store the sum of all inserted values' weights
+    _num_of_values:
+        An integer to store the number of all inserted values
+
+
+    === Representation invariants ===
+    - self.weight >= 0
+
+    - self._sum_of_weights >= 0
+
+    - self._num_of_values >= 0
+
+    - (EMPTY TREE):
+        If self.weight == 0, then self.value == [] and self.subtrees == [].
+        This represents an empty simple prefix tree.
+    - (LEAF):
+        If self.subtrees == [] and self.weight > 0, this tree is a leaf.
+        (self.value is a value that was inserted into this tree.)
+    - (NON-EMPTY, NON-LEAF):
+        If len(self.subtrees) > 0, then self.value is a list (*common prefix*),
+        and self.weight > 0 (*aggregate weight*).
+
+    - **NEW**
+      This tree does not contain any compressible internal values.
+      (See the assignment handout for a definition of "compressible".)
+
+    - self.subtrees does not contain any empty prefix trees.
+
+    - self.subtrees is *sorted* in non-increasing order of their weights.
+      (You can break ties any way you like.)
+
+      Note that this applies to both leaves and non-leaf subtrees:
+      both can appear in the same self.subtrees list, and both have a `weight`
+      attribute.
+    """
+    value: Optional[Any]
+    weight: float
+    subtrees: List[CompressedPrefixTree]
+    _agg_weight: str
+    _sum_of_weights: float
+    _num_of_values: int
+
+    def __init__(self, weight_type: str) -> None:
+        """Initialize an empty simple prefix tree.
+
+        Precondition: weight_type == 'sum' or weight_type == 'average'.
+
+        The given <weight_type> value specifies how the aggregate weight
+        of non-leaf trees should be calculated (see the assignment handout
+        for details).
+        """
+        self.value, self.weight, self.subtrees = [], 0.0, []
+        self._agg_weight = weight_type
+        self._sum_of_weights, self._num_of_values = 0.0, 0
+
+    def __len__(self) -> int:
+        """Return whether this simple prefix tree is empty.
+           Return True if self.weight == 0.0
+        """
+        if self.is_empty():
+            return 0
+        elif self.is_leaf():
+            return 1
+        else:
+            return sum(len(subtree) for subtree in self.subtrees)
+
+    def is_empty(self) -> bool:
+        """ Return True if self.weight == 0.0
+        """
+        return self.weight == 0.0
+
+    def is_leaf(self) -> bool:
+        """Return whether this simple prefix tree is a leaf.
+           Return True if self.weight > 0.0 and self.subtrees == []
+        """
+        return self.weight > 0.0 and self.subtrees == []
+
+    def __str__(self) -> str:
+        """Return a string representation of this tree.
+
+        You may find this method helpful for debugging.
+        """
+        return self._str_indented()
+
+    def _str_indented(self, depth: int = 0) -> str:
+        """Return an indented string representation of this tree.
+
+        The indentation level is specified by the <depth> parameter.
+        """
+        if self.is_empty():
+            return ''
+        else:
+            s = '  ' * depth + f'{self.value} ({self.weight})\n'
+            for subtree in self.subtrees:
+                s += subtree._str_indented(depth + 1)
+            return s
+
+    def _insert_a_subtree(self, comp_tree: CompressedPrefixTree) -> None:
+        """ Insert a mutated subtree back into self.subtree to maintain a
+        non-increasing order of subtrees
+        """
+        # (think about binary search)
+        index = 0
+        while index < len(self.subtrees):
+            if self.subtrees[index].weight < comp_tree.weight:
+                break
+            index += 1
+        self.subtrees.insert(index, comp_tree)
+
+    def _update_weight(self) -> None:
+        """ Update the tree's weight after removal
+        """
+        if self._agg_weight == "sum":
+            self.weight = self._sum_of_weights
+        else:  # when aggregate weight is average
+            if self._num_of_values == 0:
+                self.weight, self.value = 0.0, []
+            else:
+                self.weight = self._sum_of_weights / self._num_of_values
+
+    def _copy(self) -> CompressedPrefixTree:
+        """ Return a copy of self
+        """
+        copy_ = CompressedPrefixTree(self._agg_weight)
+        copy_.value, copy_.weight, copy_._sum_of_weights, copy_._num_of_values \
+            = self.value, self.weight, self._sum_of_weights, self._num_of_values
+        copy_.subtrees = self.subtrees[:]
+
+        return copy_
+
+    def match_length(self, prefix: List) -> int:
+        """ Return the number of matched length of self.value and prefix
+        === Precondition ==
+            self is a tree
+        """
+        index, min_length = 0, min([len(self.value), len(prefix)])
+
+        while index < min_length:
+            if self.value[index] != prefix[index]:
+                break
+            index += 1
+        return index
+
+    def find_a_leaf(self, value: Any) -> int:
+        """ Return the index of the value located in this tree
+        Return -1 if the tree does not have the value
+
+        === Precondition ===
+        self is a tree
+        """
+        index = 0
+        while index < len(self.subtrees):
+            if self.subtrees[index].is_leaf() and \
+                    self.subtrees[index].value == value:
+                break
+            index += 1
+        if index == len(self.subtrees):
+            return -1
+        else:
+            return index
+
+    def find_a_tree(self, match_length: int, prefix: List) -> int:
+        """ Return the index of the prefix located in this tree
+            Return -1 if the tree does not have the prefix
+        """
+        index = 0
+        while index < len(self.subtrees):
+            current = self.subtrees[index]
+            if not current.is_leaf():
+                if len(current.value) > match_length and \
+                        len(prefix) > match_length:
+                    if current.value[match_length] == prefix[match_length]:
+                        break
+            index += 1
+
+        if index == len(self.subtrees):
+            return -1
+        else:
+            return index
+
+    def create_a_leaf(self, value: Any, weight: float) -> CompressedPrefixTree:
+        """ Return a leaf with value, and weight
+        """
+        leaf = CompressedPrefixTree(self._agg_weight)
+        leaf.value, leaf.weight = value, weight
+        leaf._num_of_values, leaf._sum_of_weights = 1, weight
+        return leaf
+
+    def _update_num_values(self, old_size: int, new_size: int) -> None:
+        """ If a new value is inserted into a subtree,
+            update self._num_of_values.
+        """
+        if old_size < new_size:
+            self._num_of_values += 1
+
+    def insert(self, value: Any, weight: float, prefix: List) -> None:
+        """Insert the given value into this Autocompleter.
+
+        The value is inserted with the given weight, and is associated with
+        the prefix sequence <prefix>.
+
+        If the value has already been inserted into this prefix tree
+        (compare values using ==), then the given weight should be *added* to
+        the existing weight of this value.
+
+        Preconditions:
+            weight > 0
+            The given value is either:
+                1) not in this Autocompleter
+                2) was previously inserted with the SAME prefix sequence
+        """
+        # Base Case: when the tree is empty
+        if self.is_empty():
+            if prefix == self.value:
+                # the same prefix, create a leaf
+                leaf = self.create_a_leaf(value, weight)
+
+                self._num_of_values, self._sum_of_weights = 1, weight
+                self.subtrees.append(leaf)
+                self._update_weight()
+            else:
+                # different prefix, change the root value into the prefix
+                self.value = prefix
+                self.insert(value, weight, prefix)
+
+        else:  # when the tree is not empty
+            if self.value == prefix:
+                index = self.find_a_leaf(value)
+                if index >= 0:  # when the value is already inserted
+                    subtree = self.subtrees.pop(index)
+                    subtree.weight += weight
+                    subtree._sum_of_weights += weight
+
+                else:  # when the value is not inserted before
+                    subtree = self.create_a_leaf(value, weight)
+                    self._num_of_values += 1
+
+                self._sum_of_weights += weight
+                self._insert_a_subtree(subtree)
+                self._update_weight()
+
+            else:
+                match_length = self.match_length(prefix)
+                if match_length == len(self.value):
+                    # when the longest common prefix is self.value
+                    index = self.find_a_tree(match_length, prefix)
+                    if index >= 0:
+                        subtree = self.subtrees.pop(index)
+
+                        old_num_of_values = subtree._num_of_values
+
+                        subtree.insert(value, weight, prefix)
+
+                        self._update_num_values(old_num_of_values,
+                                                subtree._num_of_values)
+                    else:
+                        subtree = CompressedPrefixTree(self._agg_weight)
+                        subtree.value = prefix
+                        subtree.insert(value, weight, prefix)
+                        self._num_of_values += 1
+
+                    self._sum_of_weights += weight
+                    self._insert_a_subtree(subtree)
+                    self._update_weight()
+
+                else:
+                    # the match length is less than the length of self.value
+                    # change the root value into the shorter prefix and insert
+                    # the new value into the tree
+                    child = self._copy()
+                    self.value = self.value[:match_length]
+                    self.subtrees = [child]
+                    self.insert(value, weight, prefix)
+
+    def _return_all_values(self) -> List[Tuple[Any, float]]:
+        if self.is_empty():
+            return []
+        elif self.is_leaf():
+            return [(self.value, self.weight)]
+        else:
+            return sum((subtree._return_all_values()
+                        for subtree in self.subtrees), [])
+
+    def _remove_empty_tree(self) -> None:
+        index = 0
+        all_empty_tree_index = []
+
+        while index < len(self.subtrees):
+            current = self.subtrees[index]
+            if current.subtrees == [] \
+                    and current.value == [] \
+                    and current.weight == 0.0:
+                all_empty_tree_index.append(index)
+
+            index += 1
+
+        subtrees_copy = self.subtrees[:]
+        self.subtrees = []
+        for i in range(len(subtrees_copy)):
+            if i in all_empty_tree_index:
+                continue
+            else:
+                self.subtrees.append(subtrees_copy[i])
+
+    def merge_tree(self) -> None:
+        """ If self has just one non-leaf node, change self.value into the value
+        of the non-leaf node and change self.subtrees as the non-leaf node's
+        subtrees.
+
+        === Precondition ===
+        There is only one internal node in self.subtreees
+        """
+        inter_node = self.subtrees[0]
+        self.subtrees, self.value, self.weight = inter_node.subtrees, \
+                                                 inter_node.value, \
+                                                 inter_node.weight
+        self._num_of_values, self._sum_of_weights = inter_node._num_of_values, \
+                                                    inter_node._sum_of_weights
+
+    def autocomplete(self, prefix: List,
+                     limit: Optional[int] = None) -> List[Tuple[Any, float]]:
+        """Return up to <limit> matches for the given prefix.
+
+        The return value is a list of tuples (value, weight), and must be
+        ordered in non-increasing weight. (You can decide how to break ties.)
+
+        If limit is None, return *every* match for the given prefix.
+
+        Precondition: limit is None or limit > 0.
+        """
+
+        if limit is None:
+            matched_length = self.match_length(prefix)
+
+            if matched_length == len(prefix):
+                return sorted(self._return_all_values(), key=lambda x: x[1],
+                              reverse=True)
+
+            subtree = self.find_a_tree(matched_length, prefix)
+
+            if subtree >= 0:
+                return self.subtrees[subtree].autocomplete(prefix)
+            return []
+
+        else:  # when there is a limit of the number you can return
+            if limit > 0:
+                if self.is_leaf():
+                    return [(self.value, self.weight)]
+
+                # when self is a tree
+                matched_length = self.match_length(prefix)
+                if matched_length == len(prefix):
+
+                    all_values = []
+
+                    for subtree in self.subtrees:
+                        return_values = subtree.autocomplete(subtree.value,
+                                                             limit)
+                        all_values.extend(return_values)
+                        limit -= len(return_values)
+
+                    return sorted(all_values, key=lambda x: x[1], reverse=True)
+                else:  # when the prefix is not the root, maybe prefix in tree
+                    subtree = self.find_a_tree(matched_length, prefix)
+
+                    if subtree >= 0:
+                        return self.subtrees[subtree].autocomplete(prefix,
+                                                                   limit)
+                    return []
+            return []
+
+    def remove(self, prefix: List) -> None:
+        """Remove all values that match the given prefix.
+
+        After removal of values under a given prefix, the compressed prefix tree
+        does not contain any empty tree.
+
+        If a tree has only one internal node, compress this tree.
+
+        """
+        match_length = self.match_length(prefix)
+        if match_length == len(prefix):
+            self.value, self.weight, self._num_of_values, self._sum_of_weights \
+                = [], 0.0, 0, 0.0
+            self.subtrees = []
+        else:  # when prefix is not self.value, prefix maybe in the tree, or not
+            match_length = self.match_length(prefix)
+            target_subtree = self.find_a_tree(match_length, prefix)
+
+            if target_subtree >= 0:
+                mutated_tree = self.subtrees.pop(target_subtree)
+
+                old_size, old_weights = mutated_tree._num_of_values, \
+                                        mutated_tree._sum_of_weights
+
+                mutated_tree.remove(prefix)
+
+                if len(mutated_tree.subtrees) == 1 and \
+                        not mutated_tree.subtrees[0].is_leaf():
+                    mutated_tree.merge_tree()
+
+                if not mutated_tree.is_empty():
+                    self._insert_a_subtree(mutated_tree)
+
+                self._sum_of_weights -= old_weights - \
+                                        mutated_tree._sum_of_weights
+                self._num_of_values -= old_size - mutated_tree._num_of_values
+
+                self._update_weight()
+                self._remove_empty_tree()
+
+                if len(self.subtrees) == 1 and not self.subtrees[0].is_leaf():
+                    self.merge_tree()
+
+                if self.is_empty():
+                    self.value, self.subtrees = [], []
+                    self._num_of_values, self._sum_of_weights = 0, 0.0
+            else:
+                return
+
+
+if __name__ == '__main__':
+    import python_ta
+    python_ta.check_all(config={
+        'max-nested-blocks': 4
+    })
