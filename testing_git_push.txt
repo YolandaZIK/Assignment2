@@ -1,3 +1,0 @@
-Why $ git push ?
-
-$ git pull upstream master
